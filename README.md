@@ -1,7 +1,23 @@
-# ArtyDogs (WARDOGS Arty)
+# ArtyDogs: WARDOGS artillery & mortar calculator
 
 Hover a spot on the WARDOGS tactical map, press a key, and the firing solution
-(azimuth, distance, elevation in MIL) appears in big type on your second monitor.
+(azimuth, distance, elevation in MIL) appears in big type on your second monitor
+and is read out loud. For the **L81 mortar** and the **SPH-2**.
+
+<p align="center"><img src="docs/screenshot.png" width="380" alt="ArtyDogs showing a SPH-2 firing solution: azimuth 269.5°, 2490 m, 414 mil low arc"></p>
+
+**Why use it over a web calculator?**
+
+- **No typing coordinates.** F7 reads your gun and F8 the target straight off the map.
+- **The game's own numbers.** The community firing table has drifted: on the
+  SPH-2 low arc it is up to **14 mil / 71 m** off what the gun sight itself
+  prints. ArtyDogs uses the sight's own range table wherever it has been seen
+  (see *The game's own firing table* below).
+- **It learns your gun.** Mark where a shell landed (F9) and it corrects the next
+  shot. After 3 shots from one spot it also works out that spot's steady error,
+  such as a tilted gun pulling left.
+- **Hands-free.** It speaks the solution, and F11 checks your sight and tells
+  you how far to turn and elevate.
 
 While the tactical map is open, WARDOGS draws a crosshair through your mouse and
 labels its two rulers with the map coordinates, `y73.39` above and `x81.57`

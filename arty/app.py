@@ -245,6 +245,7 @@ class ArtyApp:
             wraplength=max(e.width - self.trim_btn.winfo_reqwidth() - 16, 200)))
         self.tip_lbl = self._label(sol, "", self.f_small, MUTED, justify="left", anchor="w")
         self.tip_lbl.pack(fill="x", pady=(6, 0))
+        self.tip_lbl.bind("<Configure>", lambda e: self.tip_lbl.configure(wraplength=max(e.width - 4, 200)))
         self.dial_lbl = self._label(sol, "", self.f_weapon, FG, justify="left", anchor="w")
         self.dial_lbl.pack(fill="x", pady=(4, 0))
 
