@@ -14,6 +14,7 @@ OCR_STAGES = ["ch_ppocr_v3_det", "ch_ppocr_v3_rec", "ch_ppocr_v2_cls"]
 datas = [
     ("data/weapons.json", "data"),
     ("data/height_correction.json", "data"),
+    ("data/game_table_seed.csv", "data"),
     ("data/terrain/bakurani/manifest.json", "data/terrain/bakurani"),
     ("data/terrain/ozeti/manifest.json", "data/terrain/ozeti"),
     ("data/terrain/zestafona/manifest.json", "data/terrain/zestafona"),

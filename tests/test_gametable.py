@@ -75,6 +75,28 @@ class Solve(unittest.TestCase):
         self.assertGreater(up.height_mil, 10)
 
 
+class ShippedSeed(unittest.TestCase):
+    """data/game_table_seed.csv ships with the app, so a new install starts on the game's numbers."""
+
+    def test_seed_loads_and_covers_the_rows_seen(self):
+        from arty.config import GAME_TABLE_SEED
+        g = GameTable.load(SPH2, GAME_TABLE_SEED)
+        self.assertAlmostEqual(g.mil_for(LOW, 1303), 30, places=6)
+        self.assertAlmostEqual(g.mil_for(HIGH, 2130), 1020, places=6)
+        self.assertGreaterEqual(len(g.rows("low")) + len(g.rows("high")), 8)
+
+    def test_your_log_adds_to_the_seed(self):
+        import tempfile
+        from pathlib import Path
+        from arty.config import GAME_TABLE_SEED
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "sight_table.csv"
+            log.write_text("time,mil,range_m,gun_asl\nt,60,1447,\n", encoding="utf-8")
+            g = GameTable.load(SPH2, GAME_TABLE_SEED, log, Path(d) / "missing.csv")
+            self.assertIn((60.0, 1447.0), g.rows("low"))
+            self.assertIn((30.0, 1303.0), g.rows("low"))
+
+
 class Misreads(unittest.TestCase):
     def test_a_row_off_its_neighbours_is_ignored(self):
         # 1,351 misread as 1,391: 40 m off the smooth line through 30 and 50 mil

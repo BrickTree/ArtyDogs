@@ -10,11 +10,20 @@ reads both labels with OCR, and fills in your gun or target position. The
 elevation comes from the community-measured firing tables for the L81 Mortar and
 the SPH-2.
 
-> **It only looks at the screen.** The app screenshots the monitor your mouse is
-> on (the way OBS or Discord screen-share does) and listens for its own hotkeys
-> through Windows. It never reads game memory, injects anything, or sends input
-> to the game. It is still third-party software, so check the game's rules
-> before using it.
+> **What it does, and doesn't do.** The app takes **one screenshot each time you
+> press one of its keys** (the way Windows' own Snipping Tool does), reads the
+> numbers the game prints, and shows the answer **in its own window**, on your
+> second monitor. Nothing else:
+>
+> - **nothing runs in the background:** no screenshots unless you press a key
+>   or button;
+> - **nothing is drawn over the game:** no overlay, no markers on the sight;
+> - **it never touches the game:** no memory reading, no injection, no files,
+>   and it never presses a key or moves the mouse for you.
+>
+> It is still unofficial third-party software. The WARDOGS EULA (section 5.2(n))
+> forbids "unauthorised third-party software", and BULKHEAD hasn't said whether
+> calculators like this count. Read the rules and decide for yourself.
 
 ## Setup
 
@@ -51,8 +60,7 @@ logs and downloaded terrain are kept in that same folder.
 | **F7** | Read your **gun** position (hover your gun on the tactical map) |
 | **F8** | Read the **target** (hover the target) |
 | **F9** | Read where the shell actually **landed**: corrects the aim and logs the shot for the accuracy test |
-| **F10** | Show or hide the **overlay**, a small panel over the game with the solution |
-| **F11** | **Dial assist** on/off: reads the SPH-2 gun sight and talks you onto the solution |
+| **F11** | **Check the sight** (SPH-2): reads the gun sight once and says how far to turn and elevate |
 | **F6** | Save a debug snapshot (see Troubleshooting) |
 
 1. Pick **L81 MORTAR** or **SPH-2** at the top.
@@ -89,30 +97,29 @@ More while you fire:
   (*"Gun set."*, *"No reading."*). The VOICE card has an on/off switch,
   **Volume** and **Speed** sliders (let go of one to hear it) and a **Test**
   button. It uses Windows' built-in offline voice, so nothing to install.
-- **Dial assist (F11, SPH-2).** Sit in the gunner seat and the app reads the
-  sight itself — the elevation and range at the reticle, the heading tape, the
-  stabilization warning — about twice a second, and talks you on: *"Right 3.4."*
-  … *"Up 12."* … *"On target."* The overlay and window show the same (`▶ 3.4°
-  ▲ 12 mil`, green when you're on). It says *"Not stabilized."* when the chassis
-  isn't level, and fills in the gun's height from the sight's `ASL`. It never
-  touches the controls: you turn and elevate, it only reads. It switches itself
-  off after two minutes without a sight on screen.
+- **Check the sight (F11, SPH-2).** In the gunner seat, press F11 and the app
+  reads the sight **once**: the elevation and range at the reticle, the heading
+  tape, the stabilization warning and the tilt pips. It says the whole
+  correction in one go: *"Right 3.4. Up 12."* Dial that in and press F11 again
+  until it says *"On target."* The window shows the same (`▶ 3.4°  ▲ 12 mil`,
+  green when you're on). It also says *"Not stabilized."* when that warning is up,
+  and fills in the gun's height from the sight's `ASL`. It never touches the
+  controls: you turn and elevate. The **Check sight** button does the same.
 - **Heights read themselves** where the game shows them: the gun's from the
   HUD or the sight, and a hovered object's from the small `RNG … / ASL …`
   label beside the cursor. That label is tiny and the crosshair often runs
   through it, so it is only used when several readings agree; otherwise the
   field is left for you.
 - **Pick your arc.** The SPH-2 shows both arcs; click the one you're firing and
-  it's marked `● firing`. The overlay shows that arc, and shots are logged
-  against it.
+  it's marked `● firing`, and shots are logged against it.
 - **Adjust fire.** The ADJUST FIRE buttons take a spotter's call — DROP 50, ADD
   25, LEFT 10 — and move the aim along your actual line of fire. **Keep for
   next target** carries a correction to the next target: it's stored as
   "further/shorter, left/right", so it still points the right way when the new
   target is in another direction. Moving the gun clears it.
-- **Overlay (F10).** A small panel over the game with azimuth, the MIL for your
-  arc and the distance. Clicks go straight through it to the game, and it never
-  takes focus. The game must be in Borderless or Windowed mode.
+- **One monitor?** Tick **Pin on top** and put the window at the side of the
+  screen, or keep the voice on: it reads the solution out, so your eyes stay on
+  the game.
 - **Mortar sight help.** For the L81 the app names the two RNG lines on the
   scope that bracket your target and how far between them, plus the nearest 15°
   compass mark.
@@ -222,23 +229,19 @@ sight's range hit and dialing the old mil didn't.
 
 So the app now uses **the game's own table wherever the sight has been seen**:
 
-- Dial assist records each row the sight shows (`logs/sight_table.csv`), once it
-  has been read the same way twice. A row that jumps off the smooth line through
-  its neighbours is treated as a misread and ignored.
+- **It ships with the rows already seen** (`data/game_table_seed.csv`), so a new
+  install starts on the game's numbers wherever those cover.
+- Every sight check (F11) records the rows the sight shows
+  (`logs/sight_table.csv`), once a row has been read the same way twice. A row
+  that jumps off the smooth line through its neighbours is treated as a misread
+  and ignored.
 - Between recorded rows the app interpolates, and it trusts a row for one ladder
   step (10 mil) either side. Each arc says where its number came from:
   **game's sight table** (green) or **old table, unverified** (grey, with an
   amber tip below).
-- **It learns quietly too.** With the SPH-2 selected, the app checks every
-  2 seconds whether the gun sight is on screen. That's a quick pixel check for
-  the tilt pips (~2 ms), so it costs almost nothing otherwise. When it sees the
-  sight, it reads and keeps the rows even with dial assist off: every time you
-  aim, the table fills in around the elevations you actually use. Set
-  `learn_sight_table` to `false` to stop it.
-- **To fill the whole table once:** with dial assist (F11) on, look through the
-  SPH-2 sight and move the elevation slowly across each arc, about 2 seconds per
-  10 mil (a couple of minutes per arc). After that every MIL comes from the
-  game. The rows are kept for good.
+- **The table fills in as you play.** Each F11 check at a new elevation adds
+  the rows around it, so the ranges you actually use fill in first. The rows are
+  kept for good.
 - Until an area is filled in, dialing the sight's own **RNG** to the distance
   shown is the reliable fallback.
 
@@ -335,8 +338,8 @@ RANGE vs GROUND ΔZ (Bakurani, 13 flat shots)
 
 ## Checking your own dialing
 
-With **Dial assist (F11)** on while you fire, each F9 also records what the gun
-sight actually showed: the heading and mil you dialed, whether the gun was
+If you press **F11** (check the sight) before you fire, the next F9 also records
+what the gun sight actually showed: the heading and mil you dialed, whether the gun was
 stabilized, and the tilt pips. The ACCURACY TEST tab then compares dialed
 against told:
 
@@ -350,22 +353,11 @@ YOUR DIALING (6 shots with the sight seen at fire time)
 Auto-trim learns from what was dialed, so a dialing slip is never mistaken for
 the gun's own error. The reading must be less than 3 minutes old at F9.
 
-## On-sight markers and the tilt pips
+## The tilt pips
 
-While dial assist sees the SPH-2 sight, it draws on top of the sight:
-
-- an arrow **beside the MIL ladder at the elevation you need** (at the ladder's
-  edge, pointing up or down, when it's off screen);
-- an arrow **under the compass tape at the heading you need**;
-- a **level mark beside each tilt pip**. The vehicle is level when both
-  triangles sit on it; the marks turn green within a quarter dash.
-
-The markers are amber until you're on, then green. They vanish when the sight
-isn't showing (on the map, for example), and clicks pass through them. Windows
-keeps them out of screenshots, recordings and the app's own reads. Set
-`sight_marks` to `false` to turn them off.
-
-The tilt pips are also read as numbers ("LEVEL L+0.7 R+0.7", in dashes off the
+Each sight check also reads the two tilt pips beside the vehicle silhouette.
+The vehicle is level when both triangles sit on the middle dash. The pips are
+read as numbers ("LEVEL L+0.7 R+0.7", in dashes off the
 middle mark) and logged with every shot. Nobody has published what one dash
 means in degrees. Once enough shots are logged with pip readings, the app can
 learn the pull from the pips instead of waiting 3 shots at each new spot.
@@ -402,12 +394,8 @@ closed.
 - `auto_trim`: the **Auto-trim** button, remembered (on by default).
 - `terrain_map`: the **Terrain** button (`""` = off, `"bakurani"`, `"ozeti"`,
   `"zestafona"`).
-- `sight_marks`: draw the needed mil/heading/level on the gun sight while dial
-  assist is on (default `true`).
 - `voice`: `enabled`, `volume` (0-100) and `rate` (-10 slow to 10 fast), the
   VOICE card's settings.
-- `hud_position`: where the overlay sits on your main monitor, as fractions:
-  `[0.5, 0.06]` is centred near the top.
 - `save_failed_reads`: keeps the last 10 screenshots where no coordinates were
   found in `debug/`. They are useful for tuning, and they stay on your PC. Set it
   to `false` to turn this off.

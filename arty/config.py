@@ -16,11 +16,13 @@ DEBUG_DIR = APP_DIR / "debug"
 SHOT_LOG = Path(os.environ.get("WARDOGS_ARTY_SHOTLOG") or APP_DIR / "logs" / "shots.csv")
 SIGHT_LOG = SHOT_LOG.with_name("sight_table.csv")  # (mil, range) rows the SPH-2 sight printed
 ELEV_LOG = SHOT_LOG.with_name("elevations.csv")  # every height the game printed, where, and from which readout
+# Sight rows already seen in play, shipped with the app so a new install starts on the game's numbers.
+GAME_TABLE_SEED = Path(__file__).resolve().parent.parent / "data" / "game_table_seed.csv"
 
 DEFAULTS: dict = {
     # Any of F1-F24, A-Z, 0-9, Numpad0-9, Insert, Home, ... with Ctrl+/Alt+/Shift+ prefixes.
     # A registered key never reaches the game, so pick ones WARDOGS doesn't use.
-    "hotkeys": {"gun": "F7", "target": "F8", "impact": "F9", "snapshot": "F6", "hud": "F10", "dial": "F11"},
+    "hotkeys": {"gun": "F7", "target": "F8", "impact": "F9", "snapshot": "F6", "dial": "F11"},
     "weapon": "mortar",
     "always_on_top": False,
     "watch_clipboard": True,  # coordinates copied anywhere (game, Discord) become the target
@@ -28,9 +30,6 @@ DEFAULTS: dict = {
     "auto_trim": True,  # apply the gun spot's learned steady error (see arty/trim.py)
     "terrain_map": "",  # "", "bakurani", "ozeti" or "zestafona": ground heights from the map's terrain
     "terrain_auto": False,  # True when the app picked terrain_map itself from the heights (it may switch)
-    "sight_marks": True,  # with dial assist on, draw the needed mil / heading / level on the sight
-    "learn_sight_table": True,  # read the SPH-2 sight's own range table whenever it's on screen
-    "hud_position": [0.5, 0.06],  # overlay centre-x and top-y, as fractions of the main monitor
     "voice": {"enabled": True, "volume": 70, "rate": 1},  # spoken callouts; rate runs -10 (slow) to 10
     "window": None,  # "WxH+X+Y", remembered on exit
     "history_size": 12,

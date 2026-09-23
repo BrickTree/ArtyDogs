@@ -29,9 +29,8 @@ from .gametable import GameTable
 from .elevcheck import SOURCE_LABEL, ElevationLog, best_map, detect_map, fit, range_vs_ground
 from .hotkeys import HotkeyThread
 from .ocr import Ocr, ReadoutReader, ReadResult
-from .overlay import Hud, SightMarks
 from .shotlog import Shot, ShotLog
-from .sight import HEADING_TAPE, MIL_LADDER, SightReading, read_sight, read_tilt
+from .sight import SightReading, read_sight
 from .terrain import TerrainMap, available_maps
 from .speech import Speaker, digits
 from .trim import Obs, Trim, height_mil_for, learn
@@ -46,6 +45,8 @@ ROLES = ("gun", "target", "impact")
 ROLE_LABEL = {"gun": "GUN", "target": "TARGET", "impact": "IMPACT"}
 ROLE_COLOR = {"gun": BLUE, "target": AMBER, "impact": RED}
 MAX_FAILED_SAVES = 10
+# The hotkeys the app registers. Screen reads happen only when one of these is pressed.
+HOTKEY_NAMES = ("gun", "target", "impact", "snapshot", "dial")
 DZ_SANE = 150.0  # a height difference bigger than this is a misread (or a stale height), not a hill
 SIGHT_ROW_SANE = 150.0  # a sight (mil, range) row further than this from the table is a misread
 SIGHT_FRESH_S = 180.0  # a sight reading older than this at F9 isn't the shot you just fired
@@ -79,7 +80,8 @@ class ArtyApp:
         self._obs_cache: list[Obs] | None = None  # the shot log reduced for trim learning
         self.elevlog = ElevationLog(cfgmod.ELEV_LOG)  # every height the game printed, and where
         # The game's own firing table, from the rows its sight prints (see arty/gametable.py).
-        self.games = {w.id: GameTable.load(w, cfgmod.SIGHT_LOG) for w in self.data.weapons.values() if w.id == "sph2"}
+        self.games = {w.id: GameTable.load(w, cfgmod.GAME_TABLE_SEED, cfgmod.SIGHT_LOG)
+                      for w in self.data.weapons.values() if w.id == "sph2"}
         self._row_counts: dict[tuple[float, float], int] = {}
         self._elev_key: tuple | None = None
         self._elev_report = ""
@@ -102,12 +104,7 @@ class ArtyApp:
         self._last_spoken: str | None = None
         self._callout_job: str | None = None
         self._callout_prefix = ""
-        # Dial assist: reads the gun sight a couple of times a second while it's on.
-        self.dial_on = False
-        self._dial_busy = False
-        self._dial_misses = 0
-        self._dial_said = ("", 0.0)  # last phrase and when
-        self._dial_stab: bool | None = None
+        self._dial_busy = False  # a sight check (F11) is being read
         self._sight_rows: set[tuple[float, float]] = set()
         self._last_sight: tuple[float, SightReading] | None = None  # (monotonic time, reading)
         # Terrain heights for the current gun/target, from the map's heightfield.
@@ -118,9 +115,6 @@ class ArtyApp:
         self._make_fonts()
         self._build()
         self._render_terrain()
-        self.marks = SightMarks(self.root, (self._ui_family, 11, "bold"))
-        self.hud = Hud(self.root, {"bg": BG, "edge": EDGE, "fg": FG, "muted": MUTED, "accent": AMBER},
-                       self._num_family, self._ui_family, tuple(self.cfg["hud_position"]))
         self._place_window()
         self._fit_height()
         self.root.update_idletasks()
@@ -130,12 +124,12 @@ class ArtyApp:
         self.root.report_callback_exception = self._on_tk_error
 
         threading.Thread(target=self._worker, daemon=True, name="ocr").start()
-        self.hotkeys = HotkeyThread(self.cfg["hotkeys"], self._on_hotkey)
+        self.hotkeys = HotkeyThread({k: v for k, v in self.cfg["hotkeys"].items() if k in HOTKEY_NAMES},
+                                    self._on_hotkey)
         self.hotkeys.start()
         self.root.after(400, self._report_hotkeys)
         self._select_weapon(self.weapon_id)
         self.root.after(40, self._poll)
-        self.root.after(3000, self._watch_tick)
 
     # ------------------------------------------------------------------ layout
     def _make_fonts(self) -> None:
@@ -184,10 +178,8 @@ class ArtyApp:
         tk.Checkbutton(head, text="Pin on top", variable=self.topmost_var, command=self._toggle_topmost,
                        font=self.f_small, fg=MUTED, bg=BG, selectcolor=CARD, activebackground=BG,
                        activeforeground=FG, bd=0, highlightthickness=0).pack(side="right")
-        self.hud_btn = self._button(head, "Overlay: off", self._toggle_hud, MUTED)
-        self.hud_btn.pack(side="right", padx=(0, 10))
-        self.dial_btn = self._button(head, "Dial assist: off", self._toggle_dial, MUTED)
-        self.dial_btn.pack(side="right", padx=(0, 6))
+        self.dial_btn = self._button(head, f"Check sight ({self.cfg['hotkeys']['dial']})", self._check_sight)
+        self.dial_btn.pack(side="right", padx=(0, 10))
 
         wrow = tk.Frame(outer, bg=BG)
         wrow.pack(fill="x", pady=(10, 10))
@@ -470,7 +462,7 @@ class ArtyApp:
         hk = self.cfg["hotkeys"]
         self.legend_lbl.configure(text=(f"{hk['gun']} read gun   ·   {hk['target']} read target   ·   "
                                         f"{hk['impact']} read where it landed (logs the shot, corrects aim)   ·   "
-                                        f"{hk['hud']} overlay on/off   ·   {hk['dial']} dial assist (SPH-2 sight)   ·   "
+                                        f"{hk['dial']} check the SPH-2 sight   ·   "
                                         f"{hk['snapshot']} debug snapshot\n"
                                         "Hover the spot on the tactical map (or a coordinate line in chat) "
                                         "and press the key."))
@@ -483,11 +475,11 @@ class ArtyApp:
     # ------------------------------------------------------------------ hotkeys & OCR worker
     def _on_hotkey(self, name: str) -> None:
         """Runs on the hotkey thread: capture right now, OCR later on the worker."""
-        if name in ("hud", "dial"):
-            self.results.put((f"toggle_{name}",))
-            return
         if self.engine_failed:
             self.results.put(("error", name, "the OCR engine isn't running (see above); type the coordinates instead"))
+            return
+        if name == "dial":  # the gun sight fills the main monitor, wherever the mouse is
+            self._grab_sight()
             return
         try:
             x, y = screen.cursor_pos()
@@ -593,10 +585,6 @@ class ArtyApp:
             self._last_capture[msg[1]] = {**msg[4], "result": msg[2]}
             self._apply_read(msg[1], msg[2])
             self.cfg["readout_memory"] = msg[3]
-        elif kind == "toggle_hud":
-            self._toggle_hud()
-        elif kind == "toggle_dial":
-            self._toggle_dial()
         elif kind == "sight":
             self._on_sight(msg[1])
         elif kind == "asl":
@@ -631,8 +619,6 @@ class ArtyApp:
             self._status(f"{msg[1]}: {msg[2]}", RED)
             if msg[1] == "sight":
                 self._dial_busy = False
-                if self.dial_on:
-                    self.root.after(500, self._dial_tick)
 
     def _apply_read(self, role: str, res: ReadResult) -> None:
         if res.coord is None:
@@ -1187,82 +1173,35 @@ class ArtyApp:
         if self.voice_var.get():
             self.speaker.say(text)
 
-    # -- dial assist: read the gun sight, say how far to go ---------------------------------
+    # -- sight check: read the gun sight ONCE per press, say how far to go -------------------
+    # Nothing reads the game in the background and nothing is drawn over it. An app that
+    # watches the game constantly or paints on top of it looks like a cheat to anti-cheat
+    # software, whatever it actually does (WARDOGS runs a kernel-level one, 2026-09).
     DIAL_AZ_ON = 0.2  # degrees: about 7 m sideways at 2 km
     DIAL_EL_ON = 1.0  # mil
-    DIAL_GIVE_UP = 240  # readings with no sight in view (~2 minutes) before it switches itself off
 
-    def _toggle_dial(self) -> None:
-        self.dial_on = not self.dial_on
-        self.dial_btn.configure(text=f"Dial assist: {'on' if self.dial_on else 'off'}",
-                                fg=GREEN if self.dial_on else MUTED)
-        self._dial_misses, self._dial_said, self._dial_stab = 0, ("", 0.0), None
-        if not self.dial_on:
-            self._show_dial("", FG)
-            self.marks.hide()
+    def _check_sight(self) -> None:
+        """The button: the same one-shot read as the hotkey."""
+        if self._dial_busy:
             return
-        if self.weapon_id != "sph2":
-            self._status("Dial assist reads the SPH-2 gunner sight; switch the weapon to SPH-2.", AMBER)
-        else:
-            self._status("Dial assist on: sit in the SPH-2 gunner seat and it talks you onto the solution.", GREEN)
-        self._dial_tick()
-
-    def _dial_tick(self) -> None:
-        if self.dial_on and not self._dial_busy:
-            self._dial_busy = True
-            threading.Thread(target=self._grab_sight, daemon=True, name="sight-grab").start()
+        self._dial_busy = True
+        threading.Thread(target=self._grab_sight, daemon=True, name="sight-grab").start()
 
     def _grab_sight(self) -> None:
-        """Off the UI thread: screenshot the main monitor, where the game runs, for the OCR worker."""
+        """Screenshot the main monitor, where the game runs, once, for the OCR worker."""
         try:
             mon = next((m for m in screen.monitors() if m.primary), None) or screen.monitors()[0]
             self.jobs.put({"kind": "sight", "shot": screen.grab(mon.rect)})
         except Exception as e:  # noqa: BLE001
             self.results.put(("error", "sight", f"screen capture failed: {e!r}"))
 
-    WATCH_S = 2.0  # with dial assist off, look for the SPH-2 sight this often
-
-    def _watch_tick(self) -> None:
-        """Learn the game's own table without dial assist: whenever the SPH-2 sight is on
-        screen, read it quietly and keep the rows it prints. A cheap pixel check for the
-        tilt pips comes first, so the OCR only runs while you're actually in the sight."""
-        if (self.weapon_id == "sph2" and self.cfg["learn_sight_table"] and self.engine_ready
-                and not self.dial_on and not self._dial_busy):
-            self._dial_busy = True
-            threading.Thread(target=self._watch_grab, daemon=True, name="sight-watch").start()
-        self.root.after(int(self.WATCH_S * 1000), self._watch_tick)
-
-    def _watch_grab(self) -> None:
-        try:
-            mon = next((m for m in screen.monitors() if m.primary), None) or screen.monitors()[0]
-            shot = screen.grab(mon.rect)
-            if read_tilt(shot) is None:
-                self._dial_busy = False  # no sight in view: nothing to learn, no OCR spent
-                return
-            self.jobs.put({"kind": "sight", "shot": shot})
-        except Exception:  # noqa: BLE001 - a missed look is harmless
-            self._dial_busy = False
-
     def _on_sight(self, r: SightReading) -> None:
         self._dial_busy = False
-        if not self.dial_on:
-            # Quiet learning: keep the rows and the gun's height, say nothing, draw nothing.
-            if r.found:
-                self._record_sight_rows(r)
-                if r.asl is not None:
-                    self._log_elevation("sight", "gun", float(r.asl))
-            return
-        self.root.after(150, self._dial_tick)  # keep reading while it's on
         if not r.found:
-            self._dial_misses += 1
-            if self._dial_misses >= self.DIAL_GIVE_UP:
-                self._toggle_dial()
-                self._status("Dial assist switched itself off: no gun sight seen for two minutes.", MUTED)
-            else:
-                self._show_dial("DIAL   look through the SPH-2 gun sight", MUTED)
-            self.marks.hide()  # the map or anything else is up: stay out of its way
+            hk = self.cfg["hotkeys"]["dial"]
+            self._show_dial(f"SIGHT   no SPH-2 gun sight on screen: look through it and press {hk}", MUTED)
+            self._say("No sight.")
             return
-        self._dial_misses = 0
         if r.mil is not None and r.heading is not None:
             self._last_sight = (time.monotonic(), r)  # what the gun was laid at, for the next F9
         self._record_sight_rows(r)
@@ -1277,11 +1216,11 @@ class ArtyApp:
     def _guide(self, r: SightReading) -> None:
         plan = self._plan()
         if plan is None:
-            self._show_dial("DIAL   read a gun and a target first", MUTED)
+            self._show_dial("SIGHT   read a gun and a target first", MUTED)
             return
         sol, arc = plan.sol, plan.arc
         if arc is None:
-            self._show_dial("DIAL   target is out of range", RED)
+            self._show_dial("SIGHT   target is out of range", RED)
             return
         az_err = None if r.heading is None else (sol.azimuth_deg - r.heading + 180) % 360 - 180
         el_err = None if r.mil is None else (arc.min_mil + arc.max_mil) / 2 - r.mil
@@ -1296,66 +1235,19 @@ class ArtyApp:
         if r.stabilized is False:
             parts.append("UNSTABILIZED")
             colour = RED
-        self._show_dial("DIAL   " + "     ".join(parts), colour)
-        self._draw_marks(r, sol, arc, az_err, el_err, az_ok, el_ok)
+        self._show_dial(f"SIGHT {datetime.now():%H:%M:%S}   " + "     ".join(parts), colour)
 
-        if r.stabilized is False and self._dial_stab is not False:
-            self._dial_say("Not stabilized.", force=True)
-        elif r.stabilized is True and self._dial_stab is False:
-            self._dial_say("Stabilized.", force=True)
-        self._dial_stab = r.stabilized
-        # One instruction at a time: turn first, then elevate.
-        if not az_ok and az_err is not None:
-            amount = f"{abs(az_err):.0f}" if abs(az_err) >= 10 else f"{abs(az_err):.1f}"
-            self._dial_say(f"{'Right' if az_err > 0 else 'Left'} {amount}.")
-        elif not el_ok and el_err is not None:
-            self._dial_say(f"{'Up' if el_err > 0 else 'Down'} {abs(el_err):.0f}.")
-        elif az_ok and el_ok:
-            self._dial_say("On target.")
-
-    def _draw_marks(self, r: SightReading, sol: Solution, arc: ArcSolution | None, az_err: float | None,
-                    el_err: float | None, az_ok: bool, el_ok: bool) -> None:
-        """Markers on the sight: the needed mil beside the ladder, the needed heading under
-        the tape, and the level mark beside each tilt pip."""
-        mon = next((m for m in screen.monitors() if m.primary), None)
-        if mon is None or not self.cfg["sight_marks"]:
-            self.marks.hide()
-            return
-        l, t, rgt, b = mon.rect
-        w, h = rgt - l, b - t
-        marks: list[tuple] = []
-        if arc is not None and r.mil_scale is not None and el_err is not None:
-            need = (arc.min_mil + arc.max_mil) / 2
-            y, x = r.mil_y(need), (r.mil_label_x or 0.64 * w) - 24
-            top, bottom = MIL_LADDER[1] * h + 20, MIL_LADDER[3] * h - 20
-            colour = GREEN if el_ok else AMBER
-            if y < top:
-                marks.append(("arrow", x, top, "up", colour, f"{need:.0f}"))
-            elif y > bottom:
-                marks.append(("arrow", x, bottom, "down", colour, f"{need:.0f}"))
-            else:
-                marks.append(("arrow", x, y, "right", colour, f"{need:.0f}"))
-        if r.heading_scale is not None and az_err is not None:
-            x = r.heading_x(sol.azimuth_deg)
-            left, right = HEADING_TAPE[0] * w + 20, HEADING_TAPE[2] * w - 20
-            y = HEADING_TAPE[3] * h + 2
-            colour = GREEN if az_ok else AMBER
-            if x < left:
-                marks.append(("arrow", left, y + 12, "left", colour, f"{sol.azimuth_deg:.1f}"))
-            elif x > right:
-                marks.append(("arrow", right, y + 12, "right", colour, f"{sol.azimuth_deg:.1f}"))
-            else:
-                marks.append(("arrow", x, y, "up", colour, f"{sol.azimuth_deg:.1f}"))
-        if r.pips is not None and r.tilt is not None:
-            cy, lx, rx, _sp = r.pips
-            colour = GREEN if max(abs(v) for v in r.tilt) <= LEVEL_OK else AMBER
-            marks.append(("bar", lx - 26, cy - 3, lx - 4, cy + 3, colour))  # level = triangle on this line
-            marks.append(("bar", rx + 4, cy - 3, rx + 26, cy + 3, colour))
-        if not marks:
-            self.marks.hide()
-            return
-        self.marks.show(mon.rect)
-        self.marks.draw(marks)
+        # The whole correction in one sentence, turn first: press again after dialing.
+        said = ["Not stabilized."] if r.stabilized is False else []
+        if az_ok and el_ok:
+            said.append("On target.")
+        else:
+            if not az_ok and az_err is not None:
+                amount = f"{abs(az_err):.0f}" if abs(az_err) >= 10 else f"{abs(az_err):.1f}"
+                said.append(f"{'Right' if az_err > 0 else 'Left'} {amount}.")
+            if not el_ok and el_err is not None:
+                said.append(f"{'Up' if el_err > 0 else 'Down'} {abs(el_err):.0f}.")
+        self._say(" ".join(said))
 
     def _fired_sight(self) -> tuple[SightReading, float] | None:
         """The sight reading taken before this F9: what the gun was laid at when it fired."""
@@ -1364,21 +1256,12 @@ class ArtyApp:
         age = time.monotonic() - self._last_sight[0]
         return (self._last_sight[1], age) if age <= SIGHT_FRESH_S else None
 
-    def _dial_say(self, phrase: str, force: bool = False) -> None:
-        """Speak guidance without chattering: at most every 1.2 s, repeats only as a reminder."""
-        last, when = self._dial_said
-        now = time.monotonic()
-        if phrase == last and (phrase == "On target." or now - when < 4.0):
-            return
-        if phrase != last and not force and now - when < 1.2:
-            return  # the next reading will say it
-        self._dial_said = (phrase, now)
-        if self.voice_var.get():
+    def _say(self, phrase: str) -> None:
+        if phrase and self.voice_var.get():
             self.speaker.say(phrase)
 
     def _show_dial(self, text: str, colour: str) -> None:
         self.dial_lbl.configure(text=text, fg=colour)
-        self.hud.set_guide(text, colour)
 
     def _record_sight_rows(self, r: SightReading) -> None:
         """Keep every (mil, range) row the sight prints: the game's own firing table."""
@@ -1481,29 +1364,6 @@ class ArtyApp:
         self._status(f"Saved that {ROLE_LABEL[role]} read to debug/misreads/ — type the right numbers in, "
                      "and send me the folder when you've collected a few.", BLUE)
 
-    # -- overlay ----------------------------------------------------------------------------
-    def _toggle_hud(self) -> None:
-        on = self.hud.toggle()
-        self.hud_btn.configure(text=f"Overlay: {'on' if on else 'off'}", fg=GREEN if on else MUTED)
-        self._refresh()
-
-    def _update_hud(self, sol: Solution | None, arc: ArcSolution | None) -> None:
-        if sol is None:
-            self.hud.update("—", "—", "MIL", "—", "read gun + target", MUTED, EDGE)
-            return
-        pill_bg = self.pill.cget("bg")
-        el = arc.text() if arc else "—"
-        label = f"MIL {arc.label}" if arc and len(self.data.weapons[self.weapon_id].arcs) > 1 else "MIL"
-        note = self.pill.cget("text")
-        if self.adj != (0.0, 0.0):
-            note += "  ·  corrected"
-        if self._plan_cache and self._plan_cache.offsets != (0.0, 0.0):
-            note += "  ·  trimmed"
-        if arc and self._dz and arc.mil_per_meter is None:
-            note += "  ·  no height data"
-        self.hud.update(f"{sol.azimuth_deg:.1f}°", el, label, f"{sol.distance_m:.0f} m", note,
-                        pill_bg if pill_bg != EDGE else MUTED, pill_bg)
-
     # -- tabs and the accuracy test ------------------------------------------------------------
     def _show_tab(self, key: str) -> None:
         for k, frame in self.tab_frames.items():
@@ -1596,7 +1456,7 @@ class ArtyApp:
         shots = [s for s in self.shotlog.shots if s.dialed]
         hk = self.cfg["hotkeys"]["dial"]
         if not shots:
-            return (f"YOUR DIALING: not checked yet. Keep Dial assist ({hk}) on while you fire;\n"
+            return (f"YOUR DIALING: not checked yet. Press {hk} (check sight) before you fire;\n"
                     "each F9 then records what the sight showed, so user error and gun error\n"
                     "can be told apart.")
         az = [(s.sight_heading - s.azimuth_deg + 180) % 360 - 180 for s in shots]
@@ -1782,7 +1642,6 @@ class ArtyApp:
         self._request_terrain()
         self._render_tip(sol)
         self._render_height(sol)
-        self._update_hud(sol, self._chosen_arc(sol))
         self._queue_callout(self._callout_text(sol, self._chosen_arc(sol)))
         self._render_history()
 
@@ -1806,9 +1665,9 @@ class ArtyApp:
             elif arc is not None:
                 hk = self.cfg["hotkeys"]["dial"]
                 self.tip_lbl.configure(fg=AMBER, text=(
-                    "MIL from the old community table here: it has run up to 14 mil off. Dial by the sight's RNG, "
-                    f"or turn on dial assist ({hk}) and sweep the elevation once slowly: every row the sight "
-                    "shows is recorded and this switches to the game's own numbers."))
+                    "MIL from the old community table here: it has run up to 14 mil off. Dial by the sight's RNG "
+                    f"to the distance shown, then press {hk}: each check records the rows the sight shows, and "
+                    "this switches to the game's own numbers."))
             else:
                 self.tip_lbl.configure(text="Level the SPH-2 first: side tilt throws shots off.", fg=DIM)
             return
@@ -1868,7 +1727,6 @@ class ArtyApp:
         self._status(f"Internal error: {val!r} (logged to debug/errors.log)", RED)
 
     def _quit(self) -> None:
-        self.marks.hide()
         try:
             self.cfg["window"] = self.root.geometry()
             cfgmod.save(self.cfg)

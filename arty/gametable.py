@@ -1,8 +1,9 @@
 """The game's own firing table, as the SPH-2 sight prints it.
 
 The sight labels every 10 mil of its elevation ladder with the range that
-elevation reaches ("1,020 mil" beside "2,130m"). Dial assist records each row it
-sees (logs/sight_table.csv). Those rows are the live game's numbers, and on
+elevation reaches ("1,020 mil" beside "2,130m"). Every sight check (F11) records
+the rows it sees (logs/sight_table.csv), on top of the rows shipped with the app
+(data/game_table_seed.csv). Those rows are the live game's numbers, and on
 2026-09-22 they disagreed with the community table this app started from: the
 low arc ran 65-71 m FURTHER at 30-50 mil (the table's mil ~14 too high around
 1,300 m) and 21 m further at 320 mil, while the high arc matched to 3 m at
@@ -36,17 +37,19 @@ class GameTable:
         self.add(rows)
 
     @classmethod
-    def load(cls, weapon: Weapon, path: Path) -> "GameTable":
+    def load(cls, weapon: Weapon, *paths: Path) -> "GameTable":
+        """Rows from each CSV (mil, range_m columns) that exists: the shipped seed, then your log."""
         rows = []
-        try:
-            with open(path, newline="", encoding="utf-8") as f:
-                for r in csv.DictReader(f):
-                    try:
-                        rows.append((float(r["mil"]), float(r["range_m"])))
-                    except (KeyError, ValueError):
-                        continue
-        except FileNotFoundError:
-            pass
+        for path in paths:
+            try:
+                with open(path, newline="", encoding="utf-8") as f:
+                    for r in csv.DictReader(f):
+                        try:
+                            rows.append((float(r["mil"]), float(r["range_m"])))
+                        except (KeyError, ValueError):
+                            continue
+            except FileNotFoundError:
+                continue
         return cls(weapon, rows)
 
     def arc_for(self, mil: float) -> Arc | None:
