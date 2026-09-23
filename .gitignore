@@ -1,0 +1,16 @@
+# Your own files: settings, shot logs, screenshots. Never published.
+config.json
+logs/
+debug/
+selftest.txt
+
+# Downloaded terrain (re-fetched on demand) and build output
+data/terrain/*/chunks/
+terrain_cache/
+build/
+dist/
+
+# Python
+.venv/
+__pycache__/
+*.pyc

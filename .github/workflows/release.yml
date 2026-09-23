@@ -1,0 +1,56 @@
+# Push a tag like v0.1.0 and GitHub builds the Windows app, proves it works with
+# --selftest, and attaches WARDOGS-Arty-<tag>-windows.zip to that release.
+# Pushes and pull requests just run the tests.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write  # to create the release and upload the zip
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"  # rapidocr_onnxruntime is pinned to the version benchmarked on this
+
+      - name: Install
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m pip install --disable-pip-version-check pyinstaller
+
+      - name: Tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python -m PyInstaller wardogs_arty.spec --noconfirm --clean
+
+      - name: Self-test the build
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\WARDOGS-Arty\WARDOGS-Arty.exe -ArgumentList '--selftest' -Wait -PassThru
+          Get-Content dist\WARDOGS-Arty\selftest.txt
+          Remove-Item dist\WARDOGS-Arty\selftest.txt
+          if ($p.ExitCode -ne 0) { exit 1 }
+
+      - name: Zip
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: Compress-Archive -Path dist\WARDOGS-Arty -DestinationPath "WARDOGS-Arty-${{ github.ref_name }}-windows.zip"
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: WARDOGS-Arty-${{ github.ref_name }}-windows.zip
+          generate_release_notes: true

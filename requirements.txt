@@ -1,0 +1,5 @@
+pillow>=10
+numpy>=1.24
+# PP-OCRv3 text detection + recognition on onnxruntime; models ship inside the wheel.
+# Pinned: the reader was benchmarked against this version's output format and settings.
+rapidocr_onnxruntime==1.2.3
